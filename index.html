@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Album Tag Writer</title>
+<style>
+  :root { --bg:#fff; --fg:#111; --muted:#666; --card:#f3f3f5; --acc:#0a7cff; --ok:#1a9b4b; --bad:#d33; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#f2f2f2; --muted:#999; --card:#1d1d20; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:16px/1.4 -apple-system, system-ui, Roboto, sans-serif; max-width:560px; margin-inline:auto; }
+  h1 { font-size:20px; margin:0 0 12px; }
+  .count { font-size:48px; font-weight:700; text-align:center; font-variant-numeric:tabular-nums; }
+  .bar { height:8px; background:var(--card); border-radius:4px; overflow:hidden; margin:6px 0 10px; }
+  .bar > div { height:100%; width:0; background:var(--ok); transition:width .3s; }
+  #status { text-align:center; color:var(--muted); min-height:2.8em; }
+  button { width:100%; padding:14px; margin:6px 0; border:0; border-radius:12px; font-size:17px; background:var(--card); color:var(--fg); }
+  button.primary { background:var(--acc); color:#fff; }
+  button:disabled { opacity:.4; }
+  ul { list-style:none; padding:0; margin:12px 0; }
+  li { display:flex; gap:10px; align-items:center; padding:10px; background:var(--card); border-radius:10px; margin-bottom:6px; }
+  li .ic { width:24px; text-align:center; font-size:18px; }
+  li .u { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px; }
+  li .e { font-size:12px; color:var(--bad); }
+  details { margin:14px 0; }
+  summary { color:var(--acc); padding:8px 0; }
+  textarea, input { width:100%; padding:10px; border-radius:10px; border:1px solid var(--card); background:var(--card); color:var(--fg); font-size:14px; }
+  textarea { height:120px; }
+  label { display:block; margin-top:10px; font-size:13px; color:var(--muted); }
+  code { word-break:break-all; font-size:11px; }
+</style>
+</head>
+<body>
+<h1>Album Tag Writer</h1>
+<div class="count" id="count">0 / 0</div>
+<div class="bar"><div id="barfill"></div></div>
+<div id="status">Paste or load your links, then press Start.</div>
+
+<button class="primary" id="start">Start writing</button>
+<button id="stop" disabled>Stop</button>
+<ul id="jobs"></ul>
+
+<details open>
+  <summary>Links</summary>
+  <label>One link per line (or load them with the bookmarklet below)</label>
+  <textarea id="links" placeholder="https://..."></textarea>
+  <label>Only links containing (optional)</label>
+  <input id="filter" placeholder="/album/" autocapitalize="off" autocorrect="off">
+  <label>Batch size</label>
+  <input id="size" type="number" min="1" max="50" value="10">
+  <button id="load">Load next batch</button>
+  <button id="forget">Forget written links</button>
+</details>
+
+<details>
+  <summary>Auto-pick links from my orders page (bookmarklet)</summary>
+  <p style="font-size:14px;color:var(--muted)">One-time setup in Chrome on this phone: bookmark any page, edit that bookmark, name it "Send albums", and replace its URL with the text below. Then log in to your orders page, type "Send albums" in the address bar and tap the bookmark suggestion. Your links come back here.</p>
+  <code id="bm"></code>
+  <button id="copybm">Copy bookmarklet</button>
+</details>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+let jobs = [];
+let running = false, writing = false, ctrl = null, lastSerial = null, wake = null;
+const written = new Set(store.get('written', []));
+
+$('filter').value = store.get('filter', '');
+$('size').value = store.get('size', 10);
+$('links').value = store.get('links', '');
+
+// Links arriving from the bookmarklet: #links=<json array>
+if (location.hash.startsWith('#links=')) {
+  try {
+    const arr = JSON.parse(decodeURIComponent(location.hash.slice(7)));
+    $('links').value = arr.join('\n');
+    store.set('links', $('links').value);
+    history.replaceState(null, '', location.pathname);
+    setTimeout(() => $('load').click(), 0);
+  } catch {}
+}
+
+// Bookmarklet source
+const self = location.origin + location.pathname;
+const bm = `javascript:(function(){var f=prompt('Only links containing (blank for all)','${'/album/'}');var s=new Set();document.querySelectorAll('a[href]').forEach(function(a){if(/^https?:/.test(a.href)&&(!f||a.href.indexOf(f)>-1))s.add(a.href)});var m=document.documentElement.innerHTML.match(/https?:\\/\\/[^\\s"'<>\\\\)]+/g)||[];m.forEach(function(u){if(!f||u.indexOf(f)>-1)s.add(u)});location.href='${self}#links='+encodeURIComponent(JSON.stringify(Array.from(s)))})();`;
+$('bm').textContent = bm;
+$('copybm').onclick = async () => { try { await navigator.clipboard.writeText(bm); $('copybm').textContent = 'Copied'; } catch { $('copybm').textContent = 'Select the text above and copy it'; } };
+
+function setStatus(t) { $('status').textContent = t; }
+
+function render() {
+  const done = jobs.filter(j => j.state === 'done').length;
+  $('count').textContent = `${done} / ${jobs.length}`;
+  $('barfill').style.width = jobs.length ? (done / jobs.length * 100) + '%' : '0';
+  $('jobs').innerHTML = '';
+  jobs.forEach((j, i) => {
+    const li = document.createElement('li');
+    const ic = { pending: '○', writing: '…', done: '✅', failed: '❌' }[j.state];
+    li.innerHTML = `<span class="ic">${ic}</span><div><div>Sticker ${i + 1}</div><div class="u"></div><div class="e"></div></div>`;
+    li.querySelector('.u').textContent = j.url;
+    li.querySelector('.e').textContent = j.err || '';
+    $('jobs').appendChild(li);
+  });
+  $('start').disabled = running || !jobs.some(j => j.state !== 'done');
+  $('stop').disabled = !running;
+}
+
+function loadBatch() {
+  const filter = $('filter').value.trim();
+  const size = Math.max(1, +$('size').value || 10);
+  store.set('filter', filter); store.set('size', size); store.set('links', $('links').value);
+  const seen = new Set();
+  const all = $('links').value.split(/\s+/).filter(u => /^https?:\/\//.test(u) && (!filter || u.includes(filter)) && !seen.has(u) && seen.add(u));
+  const fresh = all.filter(u => !written.has(u));
+  jobs = fresh.slice(0, size).map(url => ({ url, state: 'pending' }));
+  setStatus(jobs.length ? `${jobs.length} links ready. Press Start, then touch a sticker to the back of the phone.` :
+    all.length ? `All ${all.length} links are already written.` : 'No links found.');
+  render();
+}
+
+function beep() {
+  try { navigator.vibrate && navigator.vibrate(150); } catch {}
+}
+
+async function start() {
+  if (!('NDEFReader' in window)) { setStatus('This needs Chrome on an Android phone with NFC turned on.'); return; }
+  running = true; ctrl = new AbortController(); lastSerial = null;
+  try { wake = await navigator.wakeLock?.request('screen'); } catch {}
+  const reader = new NDEFReader();
+  try {
+    await reader.scan({ signal: ctrl.signal });
+  } catch (e) {
+    running = false; setStatus('Cannot start NFC: ' + e.message + ' (turn NFC on and allow it).'); render(); return;
+  }
+  setStatus('Ready. Touch sticker 1 to the back of the phone.');
+  render();
+  reader.onreadingerror = () => setStatus('Could not read that tag. Try again.');
+  reader.onreading = async ev => {
+    if (!running || writing) return;
+    if (ev.serialNumber && ev.serialNumber === lastSerial) return; // same sticker still on the phone
+    const job = jobs.find(j => j.state === 'pending');
+    if (!job) return;
+    writing = true; job.state = 'writing'; job.err = ''; render();
+    try {
+      await new NDEFReader().write({ records: [{ recordType: 'url', data: job.url }] }, { overwrite: true });
+      job.state = 'done'; written.add(job.url); store.set('written', [...written]);
+      lastSerial = ev.serialNumber; beep();
+      const left = jobs.filter(j => j.state !== 'done').length;
+      if (left) setStatus(`Written ✓  Now remove it and touch sticker ${jobs.length - left + 1}.`);
+      else { setStatus(`All ${jobs.length} stickers written ✓`); stop(); }
+    } catch (e) {
+      job.state = 'pending'; job.err = e.message;
+      lastSerial = ev.serialNumber;
+      setTimeout(() => { lastSerial = null; }, 3000);
+      setStatus('Write failed: ' + e.message + '. Try again or use another sticker.');
+    }
+    writing = false; render();
+  };
+}
+
+function stop() {
+  running = false; try { ctrl && ctrl.abort(); } catch {}
+  try { wake && wake.release(); } catch {}
+  render();
+}
+
+$('start').onclick = start;
+$('stop').onclick = () => { stop(); setStatus('Stopped.'); };
+$('load').onclick = loadBatch;
+$('forget').onclick = () => { written.clear(); store.set('written', []); setStatus('Written history cleared.'); };
+$('links').addEventListener('change', () => store.set('links', $('links').value));
+render();
+</script>
+</body>
+</html>
