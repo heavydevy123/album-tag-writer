@@ -45,7 +45,7 @@
   <label>Paste links, or any text containing links (e.g. a whole copied page). Links are picked out automatically.</label>
   <textarea id="links" placeholder="https://..."></textarea>
   <label>Only links containing (optional)</label>
-  <input id="filter" placeholder="/album/" autocapitalize="off" autocorrect="off">
+  <input id="filter" placeholder="craiclabs.com/m/" autocapitalize="off" autocorrect="off">
   <label>Batch size</label>
   <input id="size" type="number" min="1" max="50" value="10">
   <button id="load">Load next batch</button>
@@ -66,6 +66,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
 let jobs = [];
+if (!localStorage.getItem('filter')) { try { localStorage.setItem('filter', JSON.stringify('craiclabs.com/m/')); } catch {} }
 let running = false, writing = false, ctrl = null, lastSerial = null, wake = null;
 const written = new Set(store.get('written', []));
 
@@ -92,7 +93,7 @@ if (location.hash.startsWith('#links=')) {
 
 // Bookmarklet source
 const self = location.origin + location.pathname;
-const bm = `javascript:(function(){var f=prompt('Only links containing (leave blank for ALL links on this page)','');if(f===null)return;var s=new Set(),all=new Set();function add(u){all.add(u);if(!f||u.indexOf(f)>-1)s.add(u)}document.querySelectorAll('a[href]').forEach(function(a){if(/^https?:/.test(a.href))add(a.href)});var m=document.documentElement.innerHTML.match(/https?:\\/\\/[^\\s"'<>\\\\)]+/g)||[];m.forEach(add);if(!s.size){alert('0 links matched. This page has '+all.size+' links in total. Examples:\\n'+Array.from(all).slice(0,6).join('\\n'));return}location.href='${self}#links='+encodeURIComponent(JSON.stringify(Array.from(s)))})();`;
+const bm = `javascript:(function(){var f=prompt('Only links containing (blank = ALL links)','craiclabs.com/m/');if(f===null)return;var s=new Set(),all=new Set();function add(u){all.add(u);if(!f||u.indexOf(f)>-1)s.add(u)}document.querySelectorAll('a[href]').forEach(function(a){if(/^https?:/.test(a.href))add(a.href)});var m=document.documentElement.innerHTML.match(/https?:\\/\\/[^\\s"'<>\\\\)]+/g)||[];m.forEach(add);if(!s.size){alert('0 links matched. This page has '+all.size+' links in total. Examples:\\n'+Array.from(all).slice(0,6).join('\\n'));return}location.href='${self}#links='+encodeURIComponent(JSON.stringify(Array.from(s)))})();`;
 $('bm').textContent = bm;
 $('copybm').onclick = async () => { try { await navigator.clipboard.writeText(bm); $('copybm').textContent = 'Copied'; } catch { $('copybm').textContent = 'Select the text above and copy it'; } };
 
