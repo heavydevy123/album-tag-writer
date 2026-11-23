@@ -80,13 +80,19 @@ if (location.hash.startsWith('#links=')) {
     $('links').value = arr.join('\n');
     store.set('links', $('links').value);
     history.replaceState(null, '', location.pathname);
-    setTimeout(() => $('load').click(), 0);
-  } catch {}
+    setTimeout(() => {
+      $('load').click();
+      if (!arr.length) setStatus('The bookmarklet sent 0 links. Run it again and leave the filter blank.');
+      else setStatus(`Received ${arr.length} links from your page. ` + $('status').textContent);
+    }, 0);
+  } catch (e) {
+    setStatus('Could not read the links sent by the bookmarklet: ' + e.message);
+  }
 }
 
 // Bookmarklet source
 const self = location.origin + location.pathname;
-const bm = `javascript:(function(){var f=prompt('Only links containing (blank for all)','${'/album/'}');var s=new Set();document.querySelectorAll('a[href]').forEach(function(a){if(/^https?:/.test(a.href)&&(!f||a.href.indexOf(f)>-1))s.add(a.href)});var m=document.documentElement.innerHTML.match(/https?:\\/\\/[^\\s"'<>\\\\)]+/g)||[];m.forEach(function(u){if(!f||u.indexOf(f)>-1)s.add(u)});location.href='${self}#links='+encodeURIComponent(JSON.stringify(Array.from(s)))})();`;
+const bm = `javascript:(function(){var f=prompt('Only links containing (leave blank for ALL links on this page)','');if(f===null)return;var s=new Set(),all=new Set();function add(u){all.add(u);if(!f||u.indexOf(f)>-1)s.add(u)}document.querySelectorAll('a[href]').forEach(function(a){if(/^https?:/.test(a.href))add(a.href)});var m=document.documentElement.innerHTML.match(/https?:\\/\\/[^\\s"'<>\\\\)]+/g)||[];m.forEach(add);if(!s.size){alert('0 links matched. This page has '+all.size+' links in total. Examples:\\n'+Array.from(all).slice(0,6).join('\\n'));return}location.href='${self}#links='+encodeURIComponent(JSON.stringify(Array.from(s)))})();`;
 $('bm').textContent = bm;
 $('copybm').onclick = async () => { try { await navigator.clipboard.writeText(bm); $('copybm').textContent = 'Copied'; } catch { $('copybm').textContent = 'Select the text above and copy it'; } };
 
