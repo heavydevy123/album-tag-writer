@@ -42,7 +42,7 @@
 
 <details open>
   <summary>Links</summary>
-  <label>One link per line (or load them with the bookmarklet below)</label>
+  <label>Paste links, or any text containing links (e.g. a whole copied page). Links are picked out automatically.</label>
   <textarea id="links" placeholder="https://..."></textarea>
   <label>Only links containing (optional)</label>
   <input id="filter" placeholder="/album/" autocapitalize="off" autocorrect="off">
@@ -120,7 +120,8 @@ function loadBatch() {
   const size = Math.max(1, +$('size').value || 10);
   store.set('filter', filter); store.set('size', size); store.set('links', $('links').value);
   const seen = new Set();
-  const all = $('links').value.split(/\s+/).filter(u => /^https?:\/\//.test(u) && (!filter || u.includes(filter)) && !seen.has(u) && seen.add(u));
+  const found = $('links').value.match(/https?:\/\/[^\s"'<>\\)]+/g) || [];
+  const all = found.filter(u => (!filter || u.includes(filter)) && !seen.has(u) && seen.add(u));
   const fresh = all.filter(u => !written.has(u));
   jobs = fresh.slice(0, size).map(url => ({ url, state: 'pending' }));
   setStatus(jobs.length ? `${jobs.length} links ready. Press Start, then touch a sticker to the back of the phone.` :
